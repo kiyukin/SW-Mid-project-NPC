@@ -1,0 +1,19 @@
+{
+  "player": {
+    "level": 3,
+    "hp": 20,
+    "inventory": ["sword", "herb"],
+    "completed_quests": []
+  },
+  "world": {
+    "location": "forest",
+    "time": "night",
+    "danger_level": "high"
+  },
+  "npc": {
+    "name": "Elder Rowan",
+    "role": "healer",
+    "personality": "kind but cautious",
+    "relationship": "neutral"
+  }
+}
