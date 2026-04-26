@@ -456,3 +456,16 @@ Unity와 AI 백엔드 연동 구조 학습
 
 프로젝트 코드:
 https://github.com/kiyukin/SW-Mid-project-NPC
+## Step 3 Refactor Goal
+
+The next step is to upgrade the current MVP into a higher-quality guide companion NPC system.
+
+Planned improvements:
+- richer memory structure
+- player model estimation
+- better priority decisions
+- better intervention control
+- choice filtering
+- stronger self-critique
+- richer reasoning_trace
+- feedback-learning-ready structure
