@@ -4,11 +4,12 @@ import json
 from typing import Any
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import logging
+import os
 
-from .agents import run_pipeline
+from .agents import run_pipeline, DEEPAGENTS_AVAILABLE
 
-HOST = "127.0.0.1"
-PORT = 8089
+HOST = os.environ.get("NPC_HOST", "127.0.0.1")
+PORT = int(os.environ.get("NPC_PORT", "8089"))
 
 # Basic structured logging to stdout
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -59,8 +60,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def run_server():
+    mode = "DEEP AGENTS" if DEEPAGENTS_AVAILABLE else "FALLBACK"
+    print(f"NPC backend listening on http://{HOST}:{PORT}/npc | Mode: {mode}")
     with HTTPServer((HOST, PORT), Handler) as httpd:
-        print(f"NPC backend listening on http://{HOST}:{PORT}/npc")
         httpd.serve_forever()
 
 

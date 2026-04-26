@@ -5,10 +5,29 @@
     "inventory": ["sword", "herb"],
     "completed_quests": []
   },
+  "behavior": {
+    "recent_actions": ["explore_east", "attack_wolf", "use_herb"],
+    "tendencies": {"risk_taking": 0.6, "exploration": 0.7, "caution": 0.4}
+  },
   "world": {
     "location": "forest",
     "time": "night",
     "danger_level": "high"
+  },
+  "story": {
+    "chapter": "chapter_1",
+    "active_objective": "Reach the watchtower",
+    "objective_state": "in_progress",
+    "ignored_mainline_seconds": 180
+  },
+  "dialogue": {
+    "last_npc_lines": ["Stay close."],
+    "last_player_lines": ["I'll scout ahead."],
+    "seconds_since_last_npc": 45
+  },
+  "memory": {
+    "episodic_notes": ["Warned player about wolves"],
+    "semantic_summaries": ["Player favors melee", "Avoid repeating wolf warning"]
   },
   "npc": {
     "name": "Elder Rowan",

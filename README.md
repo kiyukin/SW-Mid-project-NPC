@@ -2,17 +2,17 @@
 
 A minimal multi-agent NPC reasoning backend (Python) with a Unity client example.
 
-Goal: Given a JSON input from Unity containing player, world, and NPC data, the Python backend (DeepAgents-powered) returns structured JSON with intent, dialogue, quest, emotion, and action.
+Goal: Given a JSON input from Unity containing player, behavior, world, story, dialogue, memory, and NPC data, the Python backend returns structured JSON with dialogue, emotion, action, guidance, urgency_level, optional objective_reminder, and a reasoning_trace.
 
 Folder structure:
 - backend/
   - main.py               # Minimal HTTP server exposing POST /npc; structured logging
-  - agents.py             # Explicit 5-step multi-agent pipeline (LLM vs heuristic modes)
+  - agents.py             # Explicit multi-agent pipeline (LLM vs heuristic modes); logs each sub-agent
   - models.py             # Data models and schema (includes reasoning_trace in output)
   - prompts.py            # Agent system prompts
-  - sample_input.json     # Example payload for local testing
+  - sample_input.json     # Example payload for local testing (danger-at-night scenario)
 - unity/
-  - NPCClient.cs          # Unity MonoBehaviour example sending/receiving JSON
+  - NPCClient.cs          # Unity MonoBehaviour example sending/receiving JSON (updated schema)
 
 Requirements/Assumptions:
 - Python 3.10+
@@ -22,6 +22,7 @@ Requirements/Assumptions:
 Run backend locally:
 1) python3 -m backend.main
    - Starts HTTP server at http://127.0.0.1:8089/npc
+   - Prints Mode: DEEP AGENTS or Mode: FALLBACK
 2) Test with curl:
    curl -s -X POST http://127.0.0.1:8089/npc -H "Content-Type: application/json" -d @backend/sample_input.json | jq .
 
@@ -29,33 +30,52 @@ Unity usage:
 - Add unity/NPCClient.cs to a GameObject in your scene.
 - Ensure the backend is running locally (URL set in script: http://127.0.0.1:8089/npc).
 - Press Play; the Start() example sends a request and logs the parsed response.
+- For scenario 2, modify the payload in NPCClient.cs Start() or call SendNPCRequest with the JSON shown below.
 
-Design notes:
-- Sub-agents (logical roles):
-  1) PlayerStateAnalyzer
-  2) WorldContextReasoner
-  3) NPCIntentPlanner
-  4) DialogueActionGenerator
-  5) ConsistencyCritic
+Design notes (Step 2 MVP):
+- Sub-agents implemented now:
+  1) PlayerBehaviorAnalyzer
+  2) PlayerStateAnalyzer
+  3) WorldContextReasoner
+  4) StoryGoalTracker
+  5) MemoryAgent
+  6) PriorityManager
+  7) InterventionController
+  8) GuideIntentPlanner
+  9) DialogueEmotionActionGenerator
+  10) SelfCriticConsistencyAgent
+  11) ReasoningTraceBuilder (inline via pipeline logs)
+- Intent style: guide companion (warn, hint, coach, encourage, nudge, reassure, celebrate, lore_comment)
+- Placeholders prepared (stubs to be added in Step 3): PlayerModelEstimator, ChoiceFilterAgent, OutcomeFeedbackLearner
 - Reasoning flow (explicit, logged):
   1) PlayerStateAnalyzer => PlayerAnalysis
-  2) WorldContextReasoner => WorldAnalysis
-  3) NPCIntentPlanner => NPCIntent
-  4) DialogueActionGenerator => Draft NPC content
-  5) ConsistencyCritic => Final NPCResponse
+  2) PlayerBehaviorAnalyzer => BehaviorAnalysis
+  3) WorldContextReasoner => WorldAnalysis
+  4) StoryGoalTracker => StoryAnalysis
+  5) MemoryAgent => MemoryAnalysis
+  6) PriorityManager => PriorityDecision (urgency_level)
+  7) InterventionController => InterventionDecision (intervene, brevity)
+  8) GuideIntentPlanner => NPCIntent
+  9) DialogueEmotionActionGenerator => Draft content (dialogue, emotion, action, guidance, quest?)
+  10) SelfCriticConsistencyAgent => Final content
   - Each step logs a structured JSON record and is appended to reasoning_trace returned to Unity.
-- Output schema (example):
-  {
-    "intent": "warn_and_offer_quest",
-    "dialogue": "This forest is dangerous at night...",
-    "quest": {"title":"Herbs for Survival","objective":"Collect 3 herbs near the village","reward":"healing_potion"},
-    "emotion": "concerned",
-    "action": "point_to_safe_path"
-  }
+- Output schema fields now include: dialogue, emotion, action, guidance, urgency_level, optional objective_reminder, reasoning_trace.
 
 Configuration:
 - By default, the backend tries to import DeepAgents (deepagents_cli.llm.chat_completion). If unavailable, it uses a deterministic heuristic so you have a working demo without API keys.
 - To enable a real LLM via deepagents-cli, install/configure DeepAgents and set your model/provider env per its docs.
+
+Second sample scenario (story stagnation):
+Use this JSON to nudge player back to main objective:
+{
+  "player": {"level": 6, "hp": 65, "inventory": ["bow"], "completed_quests": ["side_1"]},
+  "behavior": {"recent_actions": ["fish_lake", "explore_cave"], "tendencies": {"risk_taking": 0.4, "exploration": 0.8, "caution": 0.6}},
+  "world": {"location": "meadows", "time": "day", "danger_level": "low"},
+  "story": {"chapter": "chapter_2", "active_objective": "Meet the Warden", "objective_state": "in_progress", "ignored_mainline_seconds": 1200},
+  "dialogue": {"last_npc_lines": ["The Warden awaits."], "last_player_lines": ["Maybe later."], "seconds_since_last_npc": 120},
+  "memory": {"episodic_notes": ["Player skipped Warden twice"], "semantic_summaries": ["Likes side quests"]},
+  "npc": {"name": "Companion", "role": "guide", "personality": "supportive", "relationship": "friendly"}
+}
 
 Notes:
 - Keep the project minimal. No DB, auth, dashboards, voice, or images.
@@ -179,39 +199,27 @@ NPC 의도 결정
 
 즉, 하나의 LLM이 한 번에 답을 만드는 방식이 아니라, 각 단계가 분리된 멀티에이전트 파이프라인으로 설계되었다.
 
-6. 입력 / 출력 형식
-입력 예시
+6. 입력 / 출력 형식 (MVP)
+입력 JSON 주요 항목
+- player, behavior, world, story, dialogue, memory, npc
 
-player:
+출력 JSON 주요 항목
+- dialogue, emotion, action, guidance, urgency_level, objective_reminder?, reasoning_trace, quest?
 
-level: 3
-hp: 20
-inventory: sword, herb
-completed_quests: empty list
+샘플 시나리오 1 (위험 상황: 밤의 숲, 안전 유도)
+- backend/sample_input.json 그대로 사용
 
-world:
-
-location: forest
-time: night
-danger_level: high
-
-npc:
-
-name: Elder Rowan
-role: healer
-personality: kind but cautious
-relationship: neutral
-출력 예시
-intent: warn_and_offer_quest
-dialogue: Night brings danger. Bring me three fresh herbs and I shall brew medicine for you.
-emotion: concerned
-action: point_to_safe_path
-quest:
-title: Herbs for Survival
-objective: Collect 3 herbs near the village
-reward: healing_potion
-
-또한 reasoning_trace를 통해 각 서브에이전트의 출력 결과를 확인할 수 있다.
+샘플 시나리오 2 (메인 스토리 장기 미진행: 푸시 유도)
+- 예시 요청 바디:
+{
+  "player": {"level": 6, "hp": 65, "inventory": ["bow"], "completed_quests": ["side_1"]},
+  "behavior": {"recent_actions": ["fish_lake", "explore_cave"], "tendencies": {"risk_taking": 0.4, "exploration": 0.8, "caution": 0.6}},
+  "world": {"location": "meadows", "time": "day", "danger_level": "low"},
+  "story": {"chapter": "chapter_2", "active_objective": "Meet the Warden", "objective_state": "in_progress", "ignored_mainline_seconds": 1200},
+  "dialogue": {"last_npc_lines": ["The Warden awaits."], "last_player_lines": ["Maybe later."], "seconds_since_last_npc": 120},
+  "memory": {"episodic_notes": ["Player skipped Warden twice"], "semantic_summaries": ["Likes side quests"]},
+  "npc": {"name": "Elder Rowan", "role": "healer", "personality": "kind but cautious", "relationship": "friendly"}
+}
 
 7. 실행 결과
 
@@ -239,17 +247,11 @@ quest: Herbs for Survival
 
 8. 현재 실행 모드
 
-현재 환경에서는 DeepAgents가 설치 또는 연결되지 않아 시스템은 heuristic fallback mode로 실행된다.
+서버 시작 시 콘솔에 "Mode: DEEP AGENTS" 또는 "Mode: FALLBACK"가 출력된다.
+- FALLBACK: 본 저장소만으로 로컬에서 즉시 실행 가능 (룰 기반/휴리스틱)
+- DEEP AGENTS: deepagents-cli 설정 후 실제 LLM 호출 경로 사용
 
-즉, 현재는 다음 상태이다.
-
-멀티에이전트 구조: 구현 완료
-단계별 추론 로그: 구현 완료
-Unity 연동 가능 구조: 구현 완료
-DeepAgents 본 실행 모드: 미적용
-fallback heuristic 모드: 적용 완료
-
-이로 인해 시스템 구조와 동작 원리는 충분히 확인할 수 있지만, 향후에는 DeepAgents 본 모드로 전환하여 실제 LLM 기반 멀티에이전트 실행까지 확장할 수 있다.
+양 모드 모두 서브에이전트 단계별 로그를 남기며, reasoning_trace에 포함된다.
 
 9. 기술 스택
 Python

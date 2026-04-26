@@ -7,17 +7,27 @@ import logging
 from .models import (
     InputPayload,
     PlayerAnalysis,
+    BehaviorAnalysis,
     WorldAnalysis,
+    StoryAnalysis,
+    MemoryAnalysis,
     NPCIntent,
+    PriorityDecision,
+    InterventionDecision,
     NPCResponse,
     Quest,
 )
 from .prompts import (
     PLAYER_ANALYZER_PROMPT,
+    BEHAVIOR_ANALYZER_PROMPT,
     WORLD_CONTEXT_PROMPT,
-    INTENT_PLANNER_PROMPT,
-    DIALOGUE_ACTION_PROMPT,
-    CONSISTENCY_CRITIC_PROMPT,
+    STORY_TRACKER_PROMPT,
+    MEMORY_AGENT_PROMPT,
+    GUIDE_INTENT_PLANNER_PROMPT,
+    PRIORITY_MANAGER_PROMPT,
+    INTERVENTION_CONTROLLER_PROMPT,
+    DIALOGUE_EMOTION_ACTION_PROMPT,
+    SELF_CRITIC_CONSISTENCY_PROMPT,
 )
 
 # Logger for structured outputs
@@ -30,7 +40,7 @@ try:
 except Exception:  # pragma: no cover
     chat_completion = None  # type: ignore
     DEEPAGENTS_AVAILABLE = False
-    print("[NPC Backend] DeepAgents not found; heuristic fallback mode ACTIVE.")
+    print("[NPC Backend] Mode: FALLBACK (Deep Agents not found)")
 
 
 def run_with_deepagents(prompt: str, user_content: str) -> str:
@@ -68,6 +78,7 @@ def heuristic_response(prompt: str, user_content: str) -> str:
     except Exception:
         data = {}
 
+    # Player state analyzer
     if "PlayerStateAnalyzer" in prompt:
         player = data.get("player", {})
         level = int(player.get("level", 1))
@@ -84,12 +95,35 @@ def heuristic_response(prompt: str, user_content: str) -> str:
             "progression_stage": stage,
         })
 
+    # Player behavior analyzer
+    if "PlayerBehaviorAnalyzer" in prompt:
+        beh = data.get("behavior", {})
+        tends = beh.get("tendencies", {})
+        risk_taking = float(tends.get("risk_taking", 0.5))
+        exploration = float(tends.get("exploration", 0.5))
+        caution = float(tends.get("caution", 0.5))
+        recent = beh.get("recent_actions", [])
+        if any("attack" in a for a in recent):
+            risk_taking = min(1.0, risk_taking + 0.2)
+        if any("sneak" in a for a in recent):
+            caution = min(1.0, caution + 0.2)
+        if any("explore" in a for a in recent):
+            exploration = min(1.0, exploration + 0.2)
+        summary = "assertive" if risk_taking > 0.7 else ("cautious" if caution > 0.7 else "balanced")
+        return json.dumps({
+            "risk_taking": round(risk_taking, 2),
+            "exploration": round(exploration, 2),
+            "caution": round(caution, 2),
+            "summary": summary,
+        })
+
+    # World context reasoner
     if "WorldContextReasoner" in prompt:
         world = data.get("world", {})
         danger = world.get("danger_level", "medium")
         time = world.get("time", "day")
         environment_threat = danger
-        is_night = time.lower() == "night"
+        is_night = str(time).lower() == "night"
         location = world.get("location", "unknown")
         hint = f"beware the {location}" if location != "unknown" else "stay alert"
         safe_action_suggestion = "stick to lit paths" if is_night else "stay near road"
@@ -100,85 +134,144 @@ def heuristic_response(prompt: str, user_content: str) -> str:
             "safe_action_suggestion": safe_action_suggestion,
         })
 
-    if "NPCIntentPlanner" in prompt:
+    # Story goal tracker
+    if "StoryGoalTracker" in prompt:
+        s = data.get("story", {})
+        active = s.get("active_objective")
+        ignored = int(s.get("ignored_mainline_seconds", 0))
+        state = s.get("objective_state", "in_progress")
+        reminder = None
+        if state in ("not_started", "in_progress") and ignored > 120:
+            reminder = f"Main quest: {active}" if active else "Return to the main path"
+        return json.dumps({
+            "objective_reminder": reminder,
+            "is_blocked": state == "blocked",
+            "time_off_mainline": ignored,
+        })
+
+    # Memory agent
+    if "MemoryAgent" in prompt:
+        m = data.get("memory", {})
+        episodic = m.get("episodic_notes", [])
+        semantic = m.get("semantic_summaries", [])
+        dont_repeat = ["avoid repeating last hint"] if episodic[-1:] else []
+        reminders = semantic[:2]
+        return json.dumps({"reminders": reminders, "dont_repeat": dont_repeat})
+
+    # Priority manager
+    if "PriorityManager" in prompt:
+        analyses = data.get("analyses", {})
+        pa = analyses.get("player", {})
+        wa = analyses.get("world", {})
+        sa = analyses.get("story", {})
+        urgency = "low"
+        if wa.get("environment_threat") == "high" or pa.get("risk") == "high":
+            urgency = "high"
+        if sa.get("time_off_mainline", 0) > 300 and urgency != "high":
+            urgency = "medium"
+        priorities: List[str] = []
+        if urgency == "high":
+            priorities.append("safety")
+        if sa.get("objective_reminder"):
+            priorities.append("story_progression")
+        return json.dumps({"urgency_level": urgency, "top_priorities": priorities[:3]})
+
+    # Intervention controller
+    if "InterventionController" in prompt:
+        urgency = data.get("urgency_level", "low")
+        cooldown = int(data.get("cooldown_seconds", 0))
+        intervene = urgency in ("high", "critical") or cooldown > 30
+        brevity = "short" if urgency in ("high", "critical") else ("normal" if urgency == "medium" else "long")
+        return json.dumps({"intervene_now": intervene, "brevity": brevity})
+
+    # Intent planner
+    if "GuideIntentPlanner" in prompt:
         pa = data.get("player_analysis", {})
         wa = data.get("world_analysis", {})
+        sa = data.get("story_analysis", {})
+        ma = data.get("memory_analysis", {})
         npc = data.get("npc", {})
-        intent = "casual"
+        intent = "hint"
         if wa.get("environment_threat") == "high" or pa.get("risk") == "high":
             intent = "warn"
-            if pa.get("needs_healing") and npc.get("role") == "healer":
-                intent = "warn_and_offer_quest"
-        elif not pa.get("combat_ready", False):
-            intent = "hint"
-        elif npc.get("role") == "merchant":
-            intent = "trade"
-        rationale = "Chosen based on risk, NPC role, and readiness."
+        elif sa.get("objective_reminder") and sa.get("time_off_mainline", 0) > 300:
+            intent = "nudge"
+        elif pa.get("combat_ready") and (ma.get("reminders") or ba.get("exploration", 0) > 0.6):
+            intent = "coach"
+        rationale = "Guide-style intent chosen from safety, story, and behavior signals."
         return json.dumps({"intent": intent, "rationale": rationale})
 
-    if "DialogueActionGenerator" in prompt:
+    # Dialogue + action generator
+    if "DialogueEmotionActionGenerator" in prompt:
         npc = data.get("npc", {})
-        intent = data.get("intent", "casual")
+        intent = data.get("intent", "hint")
         world_summary = data.get("world_analysis", {})
-        pa = data.get("player_analysis", {})
-        name = npc.get("name", "NPC")
-        role = npc.get("role", "villager")
+        name = npc.get("name", "Companion")
         emotion = "calm"
         action = "idle"
-        dialogue = f"Greetings."
-        quest = None
-        if intent in ("warn", "warn_and_hint", "warn_and_offer_quest"):
-            dialogue = "These parts are perilous. Tread carefully."
+        dialogue = "I'm here."
+        guidance = "Stay alert."
+
+        if intent == "warn":
+            dialogue = "Careful—this area is dangerous."
+            guidance = "Stick to the lit path and avoid the treeline."
             emotion = "concerned"
             action = "gesture_warning"
             if world_summary.get("is_night"):
                 action = "point_to_safe_path"
-        if intent in ("hint", "warn_and_hint"):
-            dialogue = dialogue + " Follow the old road; it is safer." if dialogue else "Follow the old road; it is safer."
-        if intent in ("offer_quest", "warn_and_offer_quest") and role == "healer":
-            dialogue = "Night brings danger. Bring me three fresh herbs and I shall brew medicine for you."
-            quest = {
-                "title": "Herbs for Survival",
-                "objective": "Collect 3 herbs near the village",
-                "reward": "healing_potion",
-            }
-        if intent == "trade" and role == "merchant":
-            dialogue = "Looking for supplies? I have what you need for the road."
-            emotion = "neutral"
-            action = "open_trade_menu"
-        if intent == "casual":
-            dialogue = f"Good day. I am {name}. The weather holds, for now."
+        elif intent == "nudge":
+            dialogue = "We’ve wandered a while—shall we return to the goal?"
+            guidance = "Head east toward the watchtower marker."
+            emotion = "stern"
+            action = "beckon_forward"
+        elif intent == "coach":
+            dialogue = "Nice form. Try spacing attacks and watch your stamina."
+            guidance = "Time your strikes and back off when low on stamina."
             emotion = "cheerful"
-            action = "nod"
+            action = "demonstrate_move"
+        elif intent == "encourage":
+            dialogue = "You’ve got this. One careful step at a time."
+            guidance = "Keep to cover and advance between safe spots."
+            emotion = "cheerful"
+            action = "thumbs_up"
+        elif intent == "reassure":
+            dialogue = "It’s fine—we can take a breath and plan."
+            guidance = "Open the map and mark a safe route."
+            emotion = "calm"
+            action = "soothe_gesture"
+        elif intent == "lore_comment":
+            dialogue = "These stones mark an old border—travelers kept to the road."
+            guidance = "Follow road markers to avoid ambush points."
+            emotion = "neutral"
+            action = "point_marker"
+        else:  # hint default
+            dialogue = "If we follow the old road, we’ll avoid most trouble."
+            guidance = "Follow the old road east."
+            emotion = "calm"
+            action = "point_path"
+
         return json.dumps({
             "dialogue": dialogue,
             "emotion": emotion,
             "action": action,
-            "quest": quest,
+            "guidance": guidance
         })
 
-    if "ConsistencyCritic" in prompt:
+    # Consistency critic
+    if "SelfCriticConsistencyAgent" in prompt or "ConsistencyCritic" in prompt:
         try:
             resp = data.get("response", {})
             intent = data.get("intent", "casual")
             npc = data.get("npc", {})
-            # Minimal adjustments: ensure quest only when provided
-            if intent == "warn_and_offer_quest" and not resp.get("quest") and npc.get("role") == "healer":
-                resp["quest"] = {
-                    "title": "Herbs for Survival",
-                    "objective": "Collect 3 herbs near the village",
-                    "reward": "healing_potion",
-                }
-            # Clamp emotion set
             allowed_emotions = {"calm", "concerned", "stern", "cheerful", "neutral"}
             if resp.get("emotion") not in allowed_emotions:
                 resp["emotion"] = "concerned" if "warn" in intent else "neutral"
-            # Ensure keys exist
             final = {
                 "intent": intent,
                 "dialogue": resp.get("dialogue", ""),
                 "emotion": resp.get("emotion", "neutral"),
                 "action": resp.get("action", "idle"),
+                "guidance": resp.get("guidance", "Stay alert."),
             }
             if resp.get("quest"):
                 final["quest"] = resp["quest"]
@@ -189,6 +282,7 @@ def heuristic_response(prompt: str, user_content: str) -> str:
                 "dialogue": "Safe travels.",
                 "emotion": "neutral",
                 "action": "nod",
+                "guidance": "Keep to the road.",
             })
 
     return "{}"
@@ -232,6 +326,22 @@ def analyze_player(payload: InputPayload) -> Tuple[PlayerAnalysis, Dict[str, Any
     return pa, trace
 
 
+def analyze_behavior(payload: InputPayload) -> Tuple[BehaviorAnalysis, Dict[str, Any]]:
+    data, mode = _run_subagent(
+        "PlayerBehaviorAnalyzer",
+        BEHAVIOR_ANALYZER_PROMPT,
+        {"behavior": payload.behavior.__dict__},
+    )
+    ba = BehaviorAnalysis(
+        risk_taking=float(data.get("risk_taking", 0.5)),
+        exploration=float(data.get("exploration", 0.5)),
+        caution=float(data.get("caution", 0.5)),
+        summary=str(data.get("summary", "balanced")),
+    )
+    trace = {"agent": "PlayerBehaviorAnalyzer", "mode": mode, "output": data}
+    return ba, trace
+
+
 def analyze_world(payload: InputPayload) -> Tuple[WorldAnalysis, Dict[str, Any]]:
     data, mode = _run_subagent(
         "WorldContextReasoner",
@@ -248,39 +358,99 @@ def analyze_world(payload: InputPayload) -> Tuple[WorldAnalysis, Dict[str, Any]]
     return wa, trace
 
 
-def plan_intent(payload: InputPayload, pa: PlayerAnalysis, wa: WorldAnalysis) -> Tuple[NPCIntent, Dict[str, Any]]:
+def analyze_story(payload: InputPayload) -> Tuple[StoryAnalysis, Dict[str, Any]]:
     data, mode = _run_subagent(
-        "NPCIntentPlanner",
-        INTENT_PLANNER_PROMPT,
-        {"player_analysis": pa.__dict__, "world_analysis": wa.__dict__, "npc": payload.npc.__dict__},
+        "StoryGoalTracker",
+        STORY_TRACKER_PROMPT,
+        {"story": payload.story.__dict__},
+    )
+    sa = StoryAnalysis(
+        objective_reminder=data.get("objective_reminder"),
+        is_blocked=bool(data.get("is_blocked", False)),
+        time_off_mainline=int(data.get("time_off_mainline", 0)),
+    )
+    trace = {"agent": "StoryGoalTracker", "mode": mode, "output": data}
+    return sa, trace
+
+
+def analyze_memory(payload: InputPayload) -> Tuple[MemoryAnalysis, Dict[str, Any]]:
+    data, mode = _run_subagent(
+        "MemoryAgent",
+        MEMORY_AGENT_PROMPT,
+        {"memory": payload.memory.__dict__},
+    )
+    ma = MemoryAnalysis(
+        reminders=list(data.get("reminders", [])),
+        dont_repeat=list(data.get("dont_repeat", [])),
+    )
+    trace = {"agent": "MemoryAgent", "mode": mode, "output": data}
+    return ma, trace
+
+
+def prioritize(payload: InputPayload, pa: PlayerAnalysis, ba: BehaviorAnalysis, wa: WorldAnalysis, sa: StoryAnalysis, ma: MemoryAnalysis) -> Tuple[PriorityDecision, Dict[str, Any]]:
+    data, mode = _run_subagent(
+        "PriorityManager",
+        PRIORITY_MANAGER_PROMPT,
+        {"analyses": {"player": pa.__dict__, "behavior": ba.__dict__, "world": wa.__dict__, "story": sa.__dict__, "memory": ma.__dict__}},
+    )
+    pd = PriorityDecision(
+        urgency_level=str(data.get("urgency_level", "low")),
+        top_priorities=list(data.get("top_priorities", [])),
+    )
+    trace = {"agent": "PriorityManager", "mode": mode, "output": data}
+    return pd, trace
+
+
+def control_intervention(pd: PriorityDecision, payload: InputPayload) -> Tuple[InterventionDecision, Dict[str, Any]]:
+    data, mode = _run_subagent(
+        "InterventionController",
+        INTERVENTION_CONTROLLER_PROMPT,
+        {"urgency_level": pd.urgency_level, "cooldown_seconds": payload.dialogue.seconds_since_last_npc},
+    )
+    ic = InterventionDecision(
+        intervene_now=bool(data.get("intervene_now", True)),
+        brevity=str(data.get("breivity", data.get("brevity", "normal"))),
+    )
+    trace = {"agent": "InterventionController", "mode": mode, "output": data}
+    return ic, trace
+
+
+def plan_intent(payload: InputPayload, pa: PlayerAnalysis, ba: BehaviorAnalysis, wa: WorldAnalysis, sa: StoryAnalysis, ma: MemoryAnalysis) -> Tuple[NPCIntent, Dict[str, Any]]:
+    data, mode = _run_subagent(
+        "GuideIntentPlanner",
+        GUIDE_INTENT_PLANNER_PROMPT,
+        {"player_analysis": pa.__dict__, "behavior_analysis": ba.__dict__, "world_analysis": wa.__dict__, "story_analysis": sa.__dict__, "memory_analysis": ma.__dict__, "npc": payload.npc.__dict__},
     )
     intent = NPCIntent(
         intent=data.get("intent", "casual"),
         rationale=data.get("rationale", ""),
     )
-    trace = {"agent": "NPCIntentPlanner", "mode": mode, "output": data}
+    trace = {"agent": "GuideIntentPlanner", "mode": mode, "output": data}
     return intent, trace
 
 
-def generate_dialogue_action(payload: InputPayload, pa: PlayerAnalysis, wa: WorldAnalysis, intent: NPCIntent) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def generate_dialogue_action(payload: InputPayload, pa: PlayerAnalysis, ba: BehaviorAnalysis, wa: WorldAnalysis, sa: StoryAnalysis, ma: MemoryAnalysis, intent: NPCIntent) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     data, mode = _run_subagent(
-        "DialogueActionGenerator",
-        DIALOGUE_ACTION_PROMPT,
+        "DialogueEmotionActionGenerator",
+        DIALOGUE_EMOTION_ACTION_PROMPT,
         {
             "npc": payload.npc.__dict__,
             "player_analysis": pa.__dict__,
+            "behavior_analysis": ba.__dict__,
             "world_analysis": wa.__dict__,
+            "story_analysis": sa.__dict__,
+            "memory_analysis": ma.__dict__,
             "intent": intent.intent,
         },
     )
-    trace = {"agent": "DialogueActionGenerator", "mode": mode, "output": data}
+    trace = {"agent": "DialogueEmotionActionGenerator", "mode": mode, "output": data}
     return data, trace
 
 
-def critique_and_finalize(payload: InputPayload, intent: NPCIntent, response: Dict[str, Any]) -> Tuple[NPCResponse, Dict[str, Any]]:
+def critique_and_finalize(payload: InputPayload, intent: NPCIntent, response: Dict[str, Any], pd: PriorityDecision, sa: StoryAnalysis) -> Tuple[NPCResponse, Dict[str, Any]]:
     data, mode = _run_subagent(
-        "ConsistencyCritic",
-        CONSISTENCY_CRITIC_PROMPT,
+        "SelfCriticConsistencyAgent",
+        SELF_CRITIC_CONSISTENCY_PROMPT,
         {
             "npc": payload.npc.__dict__,
             "intent": intent.intent,
@@ -289,23 +459,21 @@ def critique_and_finalize(payload: InputPayload, intent: NPCIntent, response: Di
             "world": payload.world.__dict__,
         },
     )
-    quest = None
-    if "quest" in data and data["quest"]:
-        q = data["quest"]
-        quest = Quest(title=q.get("title", ""), objective=q.get("objective", ""), reward=q.get("reward", ""))
     final = NPCResponse(
-        intent=data.get("intent", "casual"),
+        intent=data.get("intent", intent.intent),
         dialogue=data.get("dialogue", ""),
         emotion=data.get("emotion", "neutral"),
         action=data.get("action", "idle"),
-        quest=quest,
+        guidance=data.get("guidance", "Stay alert."),
+        urgency_level=pd.urgency_level,
+        objective_reminder=sa.objective_reminder,
     )
-    trace = {"agent": "ConsistencyCritic", "mode": mode, "output": data}
+    trace = {"agent": "SelfCriticConsistencyAgent", "mode": mode, "output": data}
     return final, trace
 
 
 def run_pipeline(input_dict: Dict[str, Any]) -> Dict[str, Any]:
-    """Explicit 5-step multi-agent pipeline producing a structured NPC response."""
+    """Explicit multi-agent pipeline producing a structured NPC response."""
     payload = InputPayload.from_dict(input_dict)
 
     reasoning_trace: List[Dict[str, Any]] = []
@@ -314,22 +482,42 @@ def run_pipeline(input_dict: Dict[str, Any]) -> Dict[str, Any]:
     pa, t1 = analyze_player(payload)
     reasoning_trace.append(t1)
 
-    # 2) Analyze world/NPC context
-    wa, t2 = analyze_world(payload)
+    # 2) Analyze behavior
+    ba, t2 = analyze_behavior(payload)
     reasoning_trace.append(t2)
 
-    # 3) Decide NPC intent
-    intent, t3 = plan_intent(payload, pa, wa)
+    # 3) Analyze world
+    wa, t3 = analyze_world(payload)
     reasoning_trace.append(t3)
 
-    # 4) Generate dialogue/action/quest
-    draft, t4 = generate_dialogue_action(payload, pa, wa, intent)
+    # 4) Track story
+    sa, t4 = analyze_story(payload)
     reasoning_trace.append(t4)
 
-    # 5) Critique and refine final result
-    final, t5 = critique_and_finalize(payload, intent, draft)
+    # 5) Memory agent
+    ma, t5 = analyze_memory(payload)
     reasoning_trace.append(t5)
 
-    # 6) Return final JSON with reasoning trace
+    # 6) Prioritize
+    pd, t6 = prioritize(payload, pa, ba, wa, sa, ma)
+    reasoning_trace.append(t6)
+
+    # 7) Intervention control
+    ic, t7 = control_intervention(pd, payload)
+    reasoning_trace.append(t7)
+
+    # 8) Plan intent
+    intent, t8 = plan_intent(payload, pa, ba, wa, sa, ma)
+    reasoning_trace.append(t8)
+
+    # 9) Generate dialogue/action
+    draft, t9 = generate_dialogue_action(payload, pa, ba, wa, sa, ma, intent)
+    reasoning_trace.append(t9)
+
+    # 10) Critique and finalize
+    final, t10 = critique_and_finalize(payload, intent, draft, pd, sa)
+    reasoning_trace.append(t10)
+
+    # 11) Return final JSON with reasoning trace
     final.reasoning_trace = reasoning_trace
     return final.to_dict()
