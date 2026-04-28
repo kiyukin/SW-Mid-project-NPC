@@ -169,12 +169,20 @@ def heuristic_response(prompt: str, user_content: str) -> str:
             urgency = "high"
         if sa.get("time_off_mainline", 0) > 300 and urgency != "high":
             urgency = "medium"
+
         priorities: List[str] = []
         if urgency == "high":
             priorities.append("safety")
         if sa.get("objective_reminder"):
             priorities.append("story_progression")
-        return json.dumps({"urgency_level": urgency, "top_priorities": priorities[:3]})
+
+        chosen_priority = priorities[0] if priorities else "silence"
+
+        return json.dumps({
+            "urgency_level": urgency,
+            "top_priorities": priorities[:3],
+            "chosen_priority": chosen_priority
+        })
 
     # Intervention controller
     if "InterventionController" in prompt:
@@ -182,28 +190,34 @@ def heuristic_response(prompt: str, user_content: str) -> str:
         cooldown = int(data.get("cooldown_seconds", 0))
         intervene = urgency in ("high", "critical") or cooldown > 30
         brevity = "short" if urgency in ("high", "critical") else ("normal" if urgency == "medium" else "long")
-        return json.dumps({"intervene_now": intervene, "brevity": brevity})
+        style = "protective" if urgency in ("high", "critical") else ("gentle" if urgency == "medium" else "minimal")
+        return json.dumps({
+            "intervene_now": intervene,
+            "brevity": brevity,
+            "style": style
+        })
 
     # Intent planner
     if "GuideIntentPlanner" in prompt:
-        pa = data.get("player_analysis", {})
-        wa = data.get("world_analysis", {})
-        sa = data.get("story_analysis", {})
-        ma = data.get("memory_analysis", {})
-        npc = data.get("npc", {})
-        intent = "hint"
-        if wa.get("environment_threat") == "high" or pa.get("risk") == "high":
-            intent = "warn"
-        elif sa.get("objective_reminder") and sa.get("time_off_mainline", 0) > 300:
-            intent = "nudge"
-        elif pa.get("combat_ready") and (ma.get("reminders") or ba.get("exploration", 0) > 0.6):
-            intent = "coach"
-        rationale = "Guide-style intent chosen from safety, story, and behavior signals."
-        return json.dumps({"intent": intent, "rationale": rationale})
+            pa = data.get("player_analysis", {})
+            ba = data.get("behavior_analysis", {})
+            wa = data.get("world_analysis", {})
+            sa = data.get("story_analysis", {})
+            ma = data.get("memory_analysis", {})
+            npc = data.get("npc", {})
+            intent = "hint"
+            if wa.get("environment_threat") == "high" or pa.get("risk") == "high":
+                intent = "warn"
+            elif sa.get("objective_reminder") and sa.get("time_off_mainline", 0) > 300:
+                intent = "nudge"
+            elif pa.get("combat_ready") and (ma.get("reminders") or ba.get("exploration", 0) > 0.6):
+                intent = "coach"
+            rationale = "Guide-style intent chosen from safety, story, and behavior signals."
+            return json.dumps({"intent": intent, "rationale": rationale})
 
     # Dialogue + action generator
     if "DialogueEmotionActionGenerator" in prompt:
-        npc = data.get("npc", {})
+        npc= data.get("npc", {})
         intent = data.get("intent", "hint")
         world_summary = data.get("world_analysis", {})
         name = npc.get("name", "Companion")
@@ -395,6 +409,7 @@ def prioritize(payload: InputPayload, pa: PlayerAnalysis, ba: BehaviorAnalysis, 
     )
     pd = PriorityDecision(
         urgency_level=str(data.get("urgency_level", "low")),
+        chosen_priority=str(data.get("chosen_priority", "silence")),
         top_priorities=list(data.get("top_priorities", [])),
     )
     trace = {"agent": "PriorityManager", "mode": mode, "output": data}
@@ -408,12 +423,12 @@ def control_intervention(pd: PriorityDecision, payload: InputPayload) -> Tuple[I
         {"urgency_level": pd.urgency_level, "cooldown_seconds": payload.dialogue.seconds_since_last_npc},
     )
     ic = InterventionDecision(
-        intervene_now=bool(data.get("intervene_now", True)),
-        brevity=str(data.get("breivity", data.get("brevity", "normal"))),
+        intervene_now=bool(data.get("intervene_now", False)),
+        brevity=str(data.get("brevity", "normal")),
+        style=str(data.get("style", "gentle")),
     )
     trace = {"agent": "InterventionController", "mode": mode, "output": data}
     return ic, trace
-
 
 def plan_intent(payload: InputPayload, pa: PlayerAnalysis, ba: BehaviorAnalysis, wa: WorldAnalysis, sa: StoryAnalysis, ma: MemoryAnalysis) -> Tuple[NPCIntent, Dict[str, Any]]:
     data, mode = _run_subagent(
