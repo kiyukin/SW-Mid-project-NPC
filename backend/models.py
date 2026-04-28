@@ -1,3 +1,4 @@
+# backend/models.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -46,6 +47,7 @@ class Dialogue:
 class Memory:
     episodic_notes: List[str] = field(default_factory=list)
     semantic_summaries: List[str] = field(default_factory=list)
+    long_term_traits: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -104,6 +106,7 @@ class InputPayload:
         memory = Memory(
             episodic_notes=list(m.get("episodic_notes", [])),
             semantic_summaries=list(m.get("semantic_summaries", [])),
+            long_term_traits=list(m.get("long_term_traits", [])),
         )
         npc = NPC(
             name=str(n.get("name", "NPC")),
@@ -159,24 +162,47 @@ class StoryAnalysis:
 class MemoryAnalysis:
     reminders: List[str] = field(default_factory=list)
     dont_repeat: List[str] = field(default_factory=list)
+    short_term: List[str] = field(default_factory=list)
+    mid_term: List[str] = field(default_factory=list)
+    long_term: List[str] = field(default_factory=list)
 
 
 @dataclass
 class NPCIntent:
-    intent: str  # e.g., warn, hint, coach, encourage, nudge, reassure, celebrate, lore_comment
+    intent: str  # e.g., warning, safe_route, healing_support, story_push, exploration_suggestion, emotional_support, objective_reminder, cautionary_restriction
     rationale: str
 
 
 @dataclass
 class PriorityDecision:
     urgency_level: str  # low|medium|high|critical
+    chosen_priority: str  # survival|direction|story|emotional_support|silence
     top_priorities: List[str]
 
 
 @dataclass
 class InterventionDecision:
     intervene_now: bool
+    style: str  # silent|short_hint|gentle_guide|strong_intervene|emotional_encourage
     brevity: str  # short|normal|long
+
+
+@dataclass
+class PlayerModel:
+    explorer: float = 0.5
+    direct_goal: float = 0.5
+    risk_averse: float = 0.5
+    story_avoidant: float = 0.5
+    hint_friendly: float = 0.5
+    hint_resistant: float = 0.5
+    label: str = "balanced"
+
+
+@dataclass
+class ChoiceFilterResult:
+    kept: List[str] = field(default_factory=list)
+    rejected: List[str] = field(default_factory=list)
+    rationale: str = ""
 
 
 # ---------- Output Schemas ----------
@@ -197,7 +223,6 @@ class NPCResponse:
     guidance: str
     urgency_level: str
     objective_reminder: Optional[str] = None
-    quest: Optional[Quest] = None
     reasoning_trace: Optional[List[Dict[str, Any]]] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -211,12 +236,6 @@ class NPCResponse:
         }
         if self.objective_reminder:
             out["objective_reminder"] = self.objective_reminder
-        if self.quest:
-            out["quest"] = {
-                "title": self.quest.title,
-                "objective": self.quest.objective,
-                "reward": self.quest.reward,
-            }
         if self.reasoning_trace is not None:
             out["reasoning_trace"] = self.reasoning_trace
         return out

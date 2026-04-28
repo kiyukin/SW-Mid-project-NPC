@@ -6,7 +6,7 @@
     "completed_quests": []
   },
   "behavior": {
-    "recent_actions": ["explore_east", "attack_wolf", "use_herb"],
+    "recent_actions": ["explore_east", "attack_wolf", "use_herb", "inspect_ruins"],
     "tendencies": {"risk_taking": 0.6, "exploration": 0.7, "caution": 0.4}
   },
   "world": {
@@ -26,8 +26,9 @@
     "seconds_since_last_npc": 45
   },
   "memory": {
-    "episodic_notes": ["Warned player about wolves"],
-    "semantic_summaries": ["Player favors melee", "Avoid repeating wolf warning"]
+    "episodic_notes": ["Warned player about wolves", "asked_for_hint"],
+    "semantic_summaries": ["Player favors melee", "Avoid repeating wolf warning"],
+    "long_term_traits": ["supportive_companion", "values_player_agency"]
   },
   "npc": {
     "name": "Elder Rowan",
