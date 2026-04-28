@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Optional
+import os
 import logging
 
 from .models import (
@@ -34,23 +35,69 @@ from .prompts import (
 logger = logging.getLogger("npc_backend")
 
 # DeepAgents availability check
+DEEPAGENTS_MODEL = os.getenv("DEEPAGENTS_MODEL", "openai:gpt-4o")
+
 try:
-    from deepagents_cli.llm import chat_completion  # type: ignore
+    from deepagents import create_deep_agent
     DEEPAGENTS_AVAILABLE = True
-except Exception:  # pragma: no cover
-    chat_completion = None  # type: ignore
+except Exception:
+    create_deep_agent = None
     DEEPAGENTS_AVAILABLE = False
     print("[NPC Backend] Mode: FALLBACK (Deep Agents not found)")
 
+_DEEP_AGENT: Optional[object] = None
+
+def get_deep_agent():
+    global _DEEP_AGENT
+    if not DEEPAGENTS_AVAILABLE:
+        return None
+    if _DEEP_AGENT is None:
+        _DEEP_AGENT = create_deep_agent(model=DEEPAGENTS_MODEL)
+    return _DEEP_AGENT
+
 
 def run_with_deepagents(prompt: str, user_content: str) -> str:
-    messages = [
-        {"role": "system", "content": prompt},
-        {"role": "user", "content": user_content},
-    ]
-    # model and provider are read from DeepAgents config/environment
-    result = chat_completion(messages=messages, model=None)  # type: ignore
-    return result.get("content", "{}")
+    agent = get_deep_agent()
+    if agent is None:
+        raise RuntimeError("Deep Agents is not available")
+
+    result = agent.invoke({
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are one sub-agent inside a game companion NPC reasoning pipeline. "
+                    "Follow the system prompt exactly and return only valid JSON. "
+                    "Do not add explanations."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"SYSTEM PROMPT:\n{prompt}\n\nINPUT JSON:\n{user_content}",
+            },
+        ]
+    })
+
+    messages = result.get("messages", [])
+    if not messages:
+        return "{}"
+
+    last = messages[-1]
+    content = getattr(last, "content", "")
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        text_parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                text_parts.append(part.get("text", ""))
+            elif isinstance(part, str):
+                text_parts.append(part)
+        return "\n".join(text_parts).strip() or "{}"
+
+    return str(content) if content else "{}"
 
 
 def run_with_heuristic(prompt: str, user_content: str) -> str:
@@ -62,14 +109,13 @@ def run_llm_system_prompt(prompt: str, user_content: str) -> Tuple[str, str]:
     if DEEPAGENTS_AVAILABLE:
         try:
             return run_with_deepagents(prompt, user_content), "deepagents"
-        except Exception:
-            # Safety net: fall back if runtime call fails
+        except Exception as e:
+            print(f"[NPC Backend] Deep Agents runtime failed, switching to fallback: {e}")
             text = run_with_heuristic(prompt, user_content)
             return text, "heuristic"
     else:
         text = run_with_heuristic(prompt, user_content)
         return text, "heuristic"
-
 
 def heuristic_response(prompt: str, user_content: str) -> str:
     """Very small rule-based fallback to keep demo functional offline."""
