@@ -244,9 +244,9 @@ class WorldAnalysis:
 
 @dataclass
 class StoryAnalysis:
-    objective_reminder: Optional[str] = None
     is_blocked: bool
     time_off_mainline: int
+    objective_reminder: Optional[str] = None
     # Strategic analysis of story elements
     story_progress_percentage: float = 0.0
     critical_path_divergence: bool = False

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Dict, Any, Tuple, List, Optional
 import os
 import logging
@@ -55,6 +56,34 @@ def get_deep_agent():
         _DEEP_AGENT = create_deep_agent(model=DEEPAGENTS_MODEL)
     return _DEEP_AGENT
 
+def extract_json_object(text: str) -> Dict[str, Any]:
+    text = text.strip()
+
+    # try plain JSON first
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    # remove markdown code fences if present
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    # try to extract first {...} block
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        candidate = match.group(0)
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
+
+    return {}
 
 def run_with_deepagents(prompt: str, user_content: str) -> str:
     agent = get_deep_agent()
@@ -353,10 +382,7 @@ def heuristic_response(prompt: str, user_content: str) -> str:
 def _run_subagent(name: str, prompt: str, user_payload: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
     user_json = json.dumps(user_payload)
     text, mode = run_llm_system_prompt(prompt, user_json)
-    try:
-        data = json.loads(text)
-    except Exception:
-        data = {}
+    data = extract_json_object(text)
     log_record = {
         "event": "subagent_result",
         "agent": name,
