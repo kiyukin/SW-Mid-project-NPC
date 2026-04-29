@@ -456,6 +456,14 @@ Unity와 AI 백엔드 연동 구조 학습
 
 프로젝트 코드:
 https://github.com/kiyukin/SW-Mid-project-NPC
+## Current Status
+
+현재 실행 모드: Deep Agents mode confirmed  
+fallback mode도 유지됨  
+현재 출력 확인 완료  
+일부 서브에이전트는 아직 빈 JSON 출력이 있어 prompt 개선 필요  
+Step 3는 부분 반영 상태  
+
 ## Step 3 Refactor Goal
 
 The next step is to upgrade the current MVP into a higher-quality guide companion NPC system.
