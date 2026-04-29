@@ -196,7 +196,7 @@ def heuristic_response(prompt: str, user_content: str) -> str:
             intent = "warn"
         elif sa.get("objective_reminder") and sa.get("time_off_mainline", 0) > 300:
             intent = "nudge"
-        elif pa.get("combat_ready") and (ma.get("reminders") or ba.get("exploration", 0) > 0.6):
+        elif pa.get("combat_ready") and (ma.get("reminders") or pa.get("exploration", 0) > 0.6):
             intent = "coach"
         rationale = "Guide-style intent chosen from safety, story, and behavior signals."
         return json.dumps({"intent": intent, "rationale": rationale})
