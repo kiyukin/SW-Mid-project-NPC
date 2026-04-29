@@ -1,3 +1,4 @@
+# backend/models.py
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Tuple
@@ -90,14 +91,14 @@ class MemoryEntry:
 
 @dataclass
 class Memory:
-    # 1.1 계층적 기억 아키텍처: 세분화된 기억 유형
-    short_term_memories: List = field(default_factory=list) # Current session, highly volatile
-    episodic_notes: List = field(default_factory=list) # Specific past events, long-term
-    semantic_summaries: List = field(default_factory=list) # Generalized facts, abstract knowledge
-    long_term_facts: List = field(default_factory=list) # Player preferences, world lore as declarative facts
-    experiential_strategies: List = field(default_factory=list) # Learned problem-solving strategies
-    knowledge_graph_nodes: Dict = field(default_factory=dict) # Simplified representation of knowledge graph nodes
-    knowledge_graph_edges: List[Tuple] = field(default_factory=list) # (source, relation, target)
+    short_term_memories: List[str] = field(default_factory=list)
+    episodic_notes: List[str] = field(default_factory=list)
+    semantic_summaries: List[str] = field(default_factory=list)
+    long_term_traits: List[str] = field(default_factory=list)
+    long_term_facts: List[str] = field(default_factory=list)
+    experiential_strategies: List[str] = field(default_factory=list)
+    knowledge_graph_nodes: Dict[str, Any] = field(default_factory=dict)
+    knowledge_graph_edges: List[Tuple[str, str, str]] = field(default_factory=list)
 
 @dataclass
 class NPC:
@@ -184,11 +185,12 @@ class InputPayload:
         memory = Memory(
             short_term_memories=short_term_memories,
             episodic_notes=episodic_notes,
-            semantic_summaries=list(m.get("semantic_summaries",)),
-            long_term_facts=list(m.get("long_term_facts",)),
-            experiential_strategies=list(m.get("experiential_strategies",)),
+            semantic_summaries=list(m.get("semantic_summaries", [])),
+            long_term_traits=list(m.get("long_term_traits", [])),
+            long_term_facts=list(m.get("long_term_facts", [])),
+            experiential_strategies=list(m.get("experiential_strategies", [])),
             knowledge_graph_nodes=dict(m.get("knowledge_graph_nodes", {})),
-            knowledge_graph_edges=[tuple(edge) for edge in m.get("knowledge_graph_edges",)]
+            knowledge_graph_edges=[tuple(edge) for edge in m.get("knowledge_graph_edges", [])],
         )
         npc = NPC(
             name=str(n.get("name", "NPC")),
@@ -242,43 +244,65 @@ class WorldAnalysis:
 
 @dataclass
 class StoryAnalysis:
-    objective_reminder: Optional[str] = None
     is_blocked: bool
     time_off_mainline: int
+    objective_reminder: Optional[str] = None
     # Strategic analysis of story elements
     story_progress_percentage: float = 0.0
     critical_path_divergence: bool = False
 
 @dataclass
 class MemoryAnalysis:
-    reminders: List = field(default_factory=list)
-    dont_repeat: List = field(default_factory=list)
-    # 1.3 기억 업데이트 및 망각 메커니즘
-    conflicting_memories: List = field(default_factory=list) # Memories that contradict current info
-    pruning_candidates: List = field(default_factory=list) # Memories suggested for deletion/summarization
+    reminders: List[str] = field(default_factory=list)
+    dont_repeat: List[str] = field(default_factory=list)
+    short_term: List[str] = field(default_factory=list)
+    mid_term: List[str] = field(default_factory=list)
+    long_term: List[str] = field(default_factory=list)
+    conflicting_memories: List[str] = field(default_factory=list)
+    pruning_candidates: List[str] = field(default_factory=list)
+
 
 @dataclass
 class NPCIntent:
-    intent: InterventionType  # e.g., warn, hint, coach, encourage, nudge, reassure, celebrate, lore_comment
-    rationale: str # Justification for the intent
+    intent: str  # e.g., warn, hint, coach, encourage, nudge, reassure, celebrate, lore_comment, cautionary_restriction
+    rationale: str
+
 
 @dataclass
 class PriorityDecision:
-    urgency_level: UrgencyLevel
-    top_priorities: List
-    # 3.1 다중 요소 기반 우선순위 시스템
-    factors_considered: Dict = field(default_factory=dict) # e.g., {"player_hp_low": 0.8, "story_critical": 0.7}
-    rationale: str = "" # Natural language explanation for the priority decision
-
+    urgency_level: str  # low|medium|high|critical
+    chosen_priority: str  # survival|direction|story_progression|emotional_support|silence
+    top_priorities: List[str]
+    factors_considered: Dict[str, float] = field(default_factory=dict)
+    rationale: str = ""
 @dataclass
 class InterventionDecision:
     intervene_now: bool
+    style: str  # silent|short_hint|gentle_guide|strong_intervene|emotional_encourage
     brevity: str  # short|normal|long
     # 4.1 임계값 기반 개입 및 유형화
     intervention_type: InterventionType # Specific type of intervention
     intensity_level: float = 0.5 # Intensity of intervention (0.0 to 1.0)
 
-# ---------- Output Schemas (Enhanced) ----------
+@dataclass
+class PlayerModel:
+    explorer: float = 0.5
+    direct_goal: float = 0.5
+    risk_averse: float = 0.5
+    story_avoidant: float = 0.5
+    hint_friendly: float = 0.5
+    hint_resistant: float = 0.5
+    label: str = "balanced"
+
+
+@dataclass
+class ChoiceFilterResult:
+    kept: List[str] = field(default_factory=list)
+    rejected: List[str] = field(default_factory=list)
+    rationale: str = ""
+
+
+# ---------- Output Schemas ----------
 
 @dataclass
 class Quest:
@@ -310,15 +334,13 @@ class NPCResponse:
     urgency_level: UrgencyLevel
     objective_reminder: Optional[str] = None
     quest: Optional[Quest] = None
-    # 7. 개선된 reasoning_trace
-    reasoning_trace: List = field(default_factory=list)
-    # 8.1 행동 결과 평가 및 학습 데이터 생성
-    player_feedback_reaction: Optional[str] = None # Placeholder for player's reaction to NPC's response
-    outcome_evaluation: Optional[str] = None # Evaluation of NPC's action effectiveness
+    reasoning_trace: List[Dict[str, Any]] = field(default_factory=list)
+    player_feedback_reaction: Optional[str] = None
+    outcome_evaluation: Optional[str] = None
 
-    def to_dict(self) -> Dict:
-        out: Dict = {
-            "intent": self.intent.value,
+    def to_dict(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "intent": self.intent,
             "dialogue": self.dialogue,
             "emotion": self.emotion.value,
             "action": self.action,
@@ -328,19 +350,25 @@ class NPCResponse:
         if self.objective_reminder:
             out["objective_reminder"] = self.objective_reminder
         if self.quest:
-            out = {
+            quest_out = {
                 "title": self.quest.title,
                 "objective": self.quest.objective,
                 "reward": self.quest.reward,
-                "difficulty": self.quest.difficulty,
-                "recommended_level": self.quest.recommended_level,
             }
+            if hasattr(self.quest, "difficulty"):
+                quest_out["difficulty"] = self.quest.difficulty
+            if hasattr(self.quest, "recommended_level"):
+                quest_out["recommended_level"] = self.quest.recommended_level
+            out["quest"] = quest_out
+
         if self.reasoning_trace:
-            out = [step.__dict__ for step in self.reasoning_trace]
+            out["reasoning_trace"] = self.reasoning_trace
+
         if self.player_feedback_reaction:
-            out = self.player_feedback_reaction
+            out["player_feedback_reaction"] = self.player_feedback_reaction
+
         if self.outcome_evaluation:
-            out = self.outcome_evaluation
+            out["outcome_evaluation"] = self.outcome_evaluation
         return out
 
 # ---------- LLM Client (Mock-up) ----------

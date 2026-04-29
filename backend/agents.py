@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
-from typing import Dict, Any, Tuple, List
+import re
+from typing import Dict, Any, Tuple, List, Optional
+import os
 import logging
 
 from .models import (
@@ -34,23 +36,97 @@ from .prompts import (
 logger = logging.getLogger("npc_backend")
 
 # DeepAgents availability check
+DEEPAGENTS_MODEL = os.getenv("DEEPAGENTS_MODEL", "openai:gpt-4o")
+
 try:
-    from deepagents_cli.llm import chat_completion  # type: ignore
+    from deepagents import create_deep_agent
     DEEPAGENTS_AVAILABLE = True
-except Exception:  # pragma: no cover
-    chat_completion = None  # type: ignore
+except Exception:
+    create_deep_agent = None
     DEEPAGENTS_AVAILABLE = False
     print("[NPC Backend] Mode: FALLBACK (Deep Agents not found)")
 
+_DEEP_AGENT: Optional[object] = None
+
+def get_deep_agent():
+    global _DEEP_AGENT
+    if not DEEPAGENTS_AVAILABLE:
+        return None
+    if _DEEP_AGENT is None:
+        _DEEP_AGENT = create_deep_agent(model=DEEPAGENTS_MODEL)
+    return _DEEP_AGENT
+
+def extract_json_object(text: str) -> Dict[str, Any]:
+    text = text.strip()
+
+    # try plain JSON first
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    # remove markdown code fences if present
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    # try to extract first {...} block
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        candidate = match.group(0)
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
+
+    return {}
 
 def run_with_deepagents(prompt: str, user_content: str) -> str:
-    messages = [
-        {"role": "system", "content": prompt},
-        {"role": "user", "content": user_content},
-    ]
-    # model and provider are read from DeepAgents config/environment
-    result = chat_completion(messages=messages, model=None)  # type: ignore
-    return result.get("content", "{}")
+    agent = get_deep_agent()
+    if agent is None:
+        raise RuntimeError("Deep Agents is not available")
+
+    result = agent.invoke({
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are one sub-agent inside a game companion NPC reasoning pipeline. "
+                    "Follow the system prompt exactly and return only valid JSON. "
+                    "Do not add explanations."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"SYSTEM PROMPT:\n{prompt}\n\nINPUT JSON:\n{user_content}",
+            },
+        ]
+    })
+
+    messages = result.get("messages", [])
+    if not messages:
+        return "{}"
+
+    last = messages[-1]
+    content = getattr(last, "content", "")
+
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        text_parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                text_parts.append(part.get("text", ""))
+            elif isinstance(part, str):
+                text_parts.append(part)
+        return "\n".join(text_parts).strip() or "{}"
+
+    return str(content) if content else "{}"
 
 
 def run_with_heuristic(prompt: str, user_content: str) -> str:
@@ -62,14 +138,13 @@ def run_llm_system_prompt(prompt: str, user_content: str) -> Tuple[str, str]:
     if DEEPAGENTS_AVAILABLE:
         try:
             return run_with_deepagents(prompt, user_content), "deepagents"
-        except Exception:
-            # Safety net: fall back if runtime call fails
+        except Exception as e:
+            print(f"[NPC Backend] Deep Agents runtime failed, switching to fallback: {e}")
             text = run_with_heuristic(prompt, user_content)
             return text, "heuristic"
     else:
         text = run_with_heuristic(prompt, user_content)
         return text, "heuristic"
-
 
 def heuristic_response(prompt: str, user_content: str) -> str:
     """Very small rule-based fallback to keep demo functional offline."""
@@ -169,12 +244,20 @@ def heuristic_response(prompt: str, user_content: str) -> str:
             urgency = "high"
         if sa.get("time_off_mainline", 0) > 300 and urgency != "high":
             urgency = "medium"
+
         priorities: List[str] = []
         if urgency == "high":
             priorities.append("safety")
         if sa.get("objective_reminder"):
             priorities.append("story_progression")
-        return json.dumps({"urgency_level": urgency, "top_priorities": priorities[:3]})
+
+        chosen_priority = priorities[0] if priorities else "silence"
+
+        return json.dumps({
+            "urgency_level": urgency,
+            "top_priorities": priorities[:3],
+            "chosen_priority": chosen_priority
+        })
 
     # Intervention controller
     if "InterventionController" in prompt:
@@ -182,28 +265,34 @@ def heuristic_response(prompt: str, user_content: str) -> str:
         cooldown = int(data.get("cooldown_seconds", 0))
         intervene = urgency in ("high", "critical") or cooldown > 30
         brevity = "short" if urgency in ("high", "critical") else ("normal" if urgency == "medium" else "long")
-        return json.dumps({"intervene_now": intervene, "brevity": brevity})
+        style = "protective" if urgency in ("high", "critical") else ("gentle" if urgency == "medium" else "minimal")
+        return json.dumps({
+            "intervene_now": intervene,
+            "brevity": brevity,
+            "style": style
+        })
 
     # Intent planner
     if "GuideIntentPlanner" in prompt:
-        pa = data.get("player_analysis", {})
-        wa = data.get("world_analysis", {})
-        sa = data.get("story_analysis", {})
-        ma = data.get("memory_analysis", {})
-        npc = data.get("npc", {})
-        intent = "hint"
-        if wa.get("environment_threat") == "high" or pa.get("risk") == "high":
-            intent = "warn"
-        elif sa.get("objective_reminder") and sa.get("time_off_mainline", 0) > 300:
-            intent = "nudge"
-        elif pa.get("combat_ready") and (ma.get("reminders") or ba.get("exploration", 0) > 0.6):
-            intent = "coach"
-        rationale = "Guide-style intent chosen from safety, story, and behavior signals."
-        return json.dumps({"intent": intent, "rationale": rationale})
+            pa = data.get("player_analysis", {})
+            ba = data.get("behavior_analysis", {})
+            wa = data.get("world_analysis", {})
+            sa = data.get("story_analysis", {})
+            ma = data.get("memory_analysis", {})
+            npc = data.get("npc", {})
+            intent = "hint"
+            if wa.get("environment_threat") == "high" or pa.get("risk") == "high":
+                intent = "warn"
+            elif sa.get("objective_reminder") and sa.get("time_off_mainline", 0) > 300:
+                intent = "nudge"
+            elif pa.get("combat_ready") and (ma.get("reminders") or ba.get("exploration", 0) > 0.6):
+                intent = "coach"
+            rationale = "Guide-style intent chosen from safety, story, and behavior signals."
+            return json.dumps({"intent": intent, "rationale": rationale})
 
     # Dialogue + action generator
     if "DialogueEmotionActionGenerator" in prompt:
-        npc = data.get("npc", {})
+        npc= data.get("npc", {})
         intent = data.get("intent", "hint")
         world_summary = data.get("world_analysis", {})
         name = npc.get("name", "Companion")
@@ -293,10 +382,7 @@ def heuristic_response(prompt: str, user_content: str) -> str:
 def _run_subagent(name: str, prompt: str, user_payload: Dict[str, Any]) -> Tuple[Dict[str, Any], str]:
     user_json = json.dumps(user_payload)
     text, mode = run_llm_system_prompt(prompt, user_json)
-    try:
-        data = json.loads(text)
-    except Exception:
-        data = {}
+    data = extract_json_object(text)
     log_record = {
         "event": "subagent_result",
         "agent": name,
@@ -395,6 +481,7 @@ def prioritize(payload: InputPayload, pa: PlayerAnalysis, ba: BehaviorAnalysis, 
     )
     pd = PriorityDecision(
         urgency_level=str(data.get("urgency_level", "low")),
+        chosen_priority=str(data.get("chosen_priority", "silence")),
         top_priorities=list(data.get("top_priorities", [])),
     )
     trace = {"agent": "PriorityManager", "mode": mode, "output": data}
@@ -408,12 +495,12 @@ def control_intervention(pd: PriorityDecision, payload: InputPayload) -> Tuple[I
         {"urgency_level": pd.urgency_level, "cooldown_seconds": payload.dialogue.seconds_since_last_npc},
     )
     ic = InterventionDecision(
-        intervene_now=bool(data.get("intervene_now", True)),
-        brevity=str(data.get("breivity", data.get("brevity", "normal"))),
+        intervene_now=bool(data.get("intervene_now", False)),
+        brevity=str(data.get("brevity", "normal")),
+        style=str(data.get("style", "gentle")),
     )
     trace = {"agent": "InterventionController", "mode": mode, "output": data}
     return ic, trace
-
 
 def plan_intent(payload: InputPayload, pa: PlayerAnalysis, ba: BehaviorAnalysis, wa: WorldAnalysis, sa: StoryAnalysis, ma: MemoryAnalysis) -> Tuple[NPCIntent, Dict[str, Any]]:
     data, mode = _run_subagent(
